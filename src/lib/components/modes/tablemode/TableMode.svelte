@@ -155,6 +155,16 @@
   import { flattenSearchResults, toRecursiveSearchResults } from '$lib/logic/search.js'
   import JSONValue from '../treemode/JSONValue.svelte'
   import { isTreeHistoryItem } from 'svelte-jsoneditor'
+  import type {
+    DeltaLanguageEngine,
+    DeltaLanguageService,
+    DeltaSourceMap,
+    ProjectionMode
+  } from '$lib/plugins/delta/language/deltaTypes.js'
+  import { createDefaultDeltaLanguageService } from '$lib/plugins/delta/language/createDefaultDeltaLanguageService.js'
+  import { createDefaultDeltaValueRegistry } from '$lib/plugins/delta/value/createDefaultDeltaValueRegistry.js'
+  import { collectDeltaValueValidationErrors } from '$lib/plugins/delta/value/collectDeltaValueValidationErrors.js'
+  import { resolveDeltaValueContext } from '$lib/plugins/delta/value/resolveDeltaValueContext.js'
 
   const debug = createDebug('jsoneditor:TableMode')
   const { openAbsolutePopup, closeAbsolutePopup } =
@@ -193,6 +203,13 @@
   export let onSortModal: OnSortModal
   export let onTransformModal: OnTransformModal
   export let onJSONEditorModal: OnJSONEditorModal
+  export let deltaMode = false
+  export let projectionMode: ProjectionMode = 'flat'
+  export let languageEngine: DeltaLanguageEngine = 'codemirror'
+  export let deltaLanguageService: DeltaLanguageService = createDefaultDeltaLanguageService()
+  export let deltaTarget: string | undefined = undefined
+  export let deltaSources: DeltaSourceMap | undefined = undefined
+  const deltaValueRegistry = createDefaultDeltaValueRegistry()
 
   let normalization: ValueNormalization
   $: normalization = createNormalizationFunctions({
@@ -385,6 +402,14 @@
     truncateTextSize,
     parser,
     normalization,
+    deltaMode,
+    projectionMode,
+    languageEngine,
+    deltaLanguageService,
+    deltaTarget,
+    deltaSources,
+    deltaValueRegistry,
+    deltaValueContext: resolveDeltaValueContext(deltaSources, deltaTarget),
     getJson: () => json,
     getDocumentState: () => documentState,
     findElement,
@@ -531,6 +556,15 @@
         let newValidationErrors: ValidationError[]
         try {
           newValidationErrors = memoizedValidate(json, validator, parser, validationParser)
+          if (deltaMode) {
+            newValidationErrors = newValidationErrors.concat(
+              collectDeltaValueValidationErrors(
+                json,
+                deltaValueRegistry,
+                resolveDeltaValueContext(deltaSources, deltaTarget)
+              )
+            )
+          }
         } catch (err) {
           newValidationErrors = [
             {
@@ -1823,7 +1857,14 @@
               </th>
               {#each columns as column}
                 <th class="jse-table-cell jse-table-cell-header">
-                  <ColumnHeader path={column} {sortedColumn} {readOnly} onSort={onSortByHeader} />
+                  <ColumnHeader
+                    path={column}
+                    {sortedColumn}
+                    {readOnly}
+                    {deltaMode}
+                    {deltaLanguageService}
+                    onSort={onSortByHeader}
+                  />
                 </th>
               {/each}
               {#if showRefreshButton}
@@ -1888,6 +1929,9 @@
                           {value}
                           {parser}
                           {isSelected}
+                          {deltaMode}
+                          {deltaTarget}
+                          {deltaSources}
                           containsSearchResult={!isEmpty(searchResultsByCell)}
                           {containsActiveSearchResult}
                           onEdit={openJSONEditorModal}

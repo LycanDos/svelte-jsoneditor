@@ -40,6 +40,13 @@
   import { cloneDeep } from 'lodash-es'
   import { createHistoryInstance } from '$lib/logic/history'
   import { createDebug } from '$lib/utils/debug'
+  import type {
+    DeltaLanguageEngine,
+    DeltaLanguageService,
+    DeltaSourceMap,
+    ProjectionMode
+  } from '$lib/plugins/delta/language/deltaTypes.js'
+  import { resolveDeltaSources } from '$lib/plugins/delta/context/resolveDeltaSources.js'
 
   export let content: Content
   export let selection: JSONEditorSelection | undefined
@@ -63,6 +70,12 @@
   export let validationParser: JSONParser
   export let pathParser: JSONPathParser
   export let insideModal: boolean
+  export let deltaMode: boolean
+  export let projectionMode: ProjectionMode
+  export let languageEngine: DeltaLanguageEngine
+  export let deltaLanguageService: DeltaLanguageService
+  export let deltaTarget: string | undefined
+  export let deltaSources: DeltaSourceMap | undefined
 
   export let onChange: OnChange
   export let onChangeMode: OnChangeMode
@@ -178,15 +191,114 @@
     }
   ]
 
+  let deltaViewMenuItems: MenuItem[]
+  $: deltaViewMenuItems = deltaMode
+    ? [
+        {
+          type: 'button',
+          text: 'flat',
+          title: `Projection: flat (current: ${projectionMode})`,
+          className:
+            'jse-group-button jse-first' + (projectionMode === 'flat' ? ' jse-selected' : ''),
+          onClick: () => {
+            projectionMode = 'flat'
+          }
+        },
+        {
+          type: 'button',
+          text: 'grouped',
+          title: `Projection: grouped (current: ${projectionMode})`,
+          className:
+            'jse-group-button jse-last' + (projectionMode === 'grouped' ? ' jse-selected' : ''),
+          onClick: () => {
+            projectionMode = 'grouped'
+          }
+        }
+      ]
+    : []
+
+  let deltaEngineMenuItems: MenuItem[]
+  $: deltaEngineMenuItems = deltaMode
+    ? [
+        {
+          type: 'button',
+          text: 'cm',
+          title: `Language engine: CodeMirror (current: ${languageEngine})`,
+          className:
+            'jse-group-button jse-first' +
+            (languageEngine === 'codemirror' ? ' jse-selected' : ''),
+          onClick: () => {
+            languageEngine = 'codemirror'
+          }
+        },
+        {
+          type: 'button',
+          text: 'monaco',
+          title: `Language engine: Monaco (current: ${languageEngine})`,
+          className:
+            'jse-group-button jse-last' + (languageEngine === 'monaco' ? ' jse-selected' : ''),
+          onClick: () => {
+            languageEngine = 'monaco'
+          }
+        }
+      ]
+    : []
+
+  let resolvedDeltaSources = resolveDeltaSources(deltaSources, deltaTarget)
+  $: resolvedDeltaSources = resolveDeltaSources(deltaSources, deltaTarget)
+
+  function handleSelectDeltaTarget(sourceId: string) {
+    deltaTarget = sourceId
+  }
+
+  let deltaTargetMenuItems: MenuItem[]
+  $: deltaTargetMenuItems = deltaMode
+    ? resolvedDeltaSources.sourceIds.map((sourceId, index) => ({
+        type: 'button' as const,
+        text: sourceId,
+        title:
+          sourceId === resolvedDeltaSources.target
+            ? `Target: ${sourceId} (current)`
+            : `Set target to ${sourceId}`,
+        className:
+          'jse-group-button' +
+          (index === 0 ? ' jse-first' : '') +
+          (index === resolvedDeltaSources.sourceIds.length - 1 ? ' jse-last' : '') +
+          (sourceId === resolvedDeltaSources.target ? ' jse-selected' : ''),
+        onClick: () => handleSelectDeltaTarget(sourceId)
+      }))
+    : []
+
+  let deltaTargetHintItems: MenuItem[]
+  $: deltaTargetHintItems =
+    deltaMode && resolvedDeltaSources.requiresExplicitTarget
+      ? [
+          {
+            type: 'button',
+            text: 'target?',
+            title: 'Multiple sources detected. Select the target source for this Delta.',
+            className: 'jse-group-button jse-first jse-last',
+            onClick: () => undefined
+          }
+        ]
+      : []
+
   const separatorMenuItem: MenuSeparator = {
     type: 'separator'
   }
 
   let handleRenderMenu: OnRenderMenuInternal
   $: handleRenderMenu = (items: MenuItem[]) => {
+    const leadingItems = [
+      ...modeMenuItems,
+      ...(deltaViewMenuItems.length ? [separatorMenuItem, ...deltaViewMenuItems] : []),
+      ...(deltaEngineMenuItems.length ? [separatorMenuItem, ...deltaEngineMenuItems] : []),
+      ...(deltaTargetMenuItems.length ? [separatorMenuItem, ...deltaTargetMenuItems] : []),
+      ...(deltaTargetHintItems.length ? [separatorMenuItem, ...deltaTargetHintItems] : [])
+    ]
     const updatedItems = isMenuSpace(items[0])
-      ? modeMenuItems.concat(items) // menu is empty, readOnly mode
-      : modeMenuItems.concat(separatorMenuItem, items)
+      ? leadingItems.concat(items)
+      : leadingItems.concat(separatorMenuItem, items)
 
     const updatedItemsOriginal = cloneDeep(updatedItems) // the user may change updatedItems in the callback
 
@@ -364,6 +476,12 @@
     onRenderMenu={handleRenderMenu}
     {onSortModal}
     {onTransformModal}
+    {deltaMode}
+    {projectionMode}
+    {languageEngine}
+    {deltaLanguageService}
+    deltaTarget={resolvedDeltaSources.target}
+    {deltaSources}
   />
 {:else if mode === Mode.table}
   <TableMode
@@ -395,6 +513,12 @@
     {onSortModal}
     {onTransformModal}
     {onJSONEditorModal}
+    {deltaMode}
+    {projectionMode}
+    {languageEngine}
+    {deltaLanguageService}
+    deltaTarget={resolvedDeltaSources.target}
+    {deltaSources}
   />
 {:else}
   <!-- mode === Mode.tree -->
@@ -430,5 +554,11 @@
     {onSortModal}
     {onTransformModal}
     {onJSONEditorModal}
+    {deltaMode}
+    {projectionMode}
+    {languageEngine}
+    {deltaLanguageService}
+    deltaTarget={resolvedDeltaSources.target}
+    {deltaSources}
   />
 {/if}

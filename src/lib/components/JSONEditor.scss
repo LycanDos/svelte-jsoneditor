@@ -19,3 +19,80 @@
     --jse-context-menu-pointer-background: #{defaults.$context-menu-pointer-hover-background};
   }
 }
+
+:global(.jse-delta-key-token) {
+  font-family: var(
+    --jse-font-family-mono,
+    ui-monospace,
+    'SFMono-Regular',
+    Consolas,
+    'Liberation Mono',
+    Menlo,
+    monospace
+  );
+}
+
+:global(.jse-delta-key-token--directive) {
+  color: #7c3aed;
+  font-weight: 700;
+}
+
+:global(.jse-delta-key-token--path) {
+  color: #0f766e;
+}
+
+:global(.jse-delta-key-token--dot) {
+  color: #94a3b8;
+}
+
+:global(.jse-delta-key-token--bracket) {
+  color: #1d4ed8;
+  font-weight: 700;
+}
+
+:global(.jse-delta-key-token--operator) {
+  color: #c2410c;
+  font-weight: 700;
+}
+
+:global(.jse-delta-key-token--number) {
+  color: #2563eb;
+}
+
+:global(.jse-delta-key-token--selector-string) {
+  color: #b45309;
+}
+
+:global(.jse-delta-key-token--active-bracket) {
+  background: rgba(59, 130, 246, 0.16);
+  border-radius: 2px;
+}
+
+:global(.jse-delta-key-token--matched-bracket) {
+  background: rgba(16, 185, 129, 0.14);
+  border-radius: 2px;
+}
+
+:global(.jse-delta-key-token--bracket-depth-0) {
+  color: #1d4ed8;
+}
+
+:global(.jse-delta-key-token--bracket-depth-1) {
+  color: #d97706;
+}
+
+:global(.jse-delta-key-token--bracket-depth-2) {
+  color: #7c3aed;
+}
+
+:global(.jse-delta-key-token--bracket-depth-3) {
+  color: #be123c;
+}
+
+:global(.jse-delta-key-token--bracket-depth-4) {
+  color: #059669;
+}
+
+:global(.jse-delta-key-token--bracket-depth-5) {
+  color: #0891b2;
+}

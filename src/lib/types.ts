@@ -2,6 +2,16 @@ import type { JSONPatchDocument, JSONPath } from 'immutable-json-patch'
 import type { Component, SvelteComponent } from 'svelte'
 import type { IconDefinition } from '@fortawesome/free-solid-svg-icons'
 import type { Action } from 'svelte/action'
+import type {
+  DeltaLanguageEngine,
+  DeltaLanguageService,
+  DeltaSourceMap,
+  ProjectionMode
+} from '$lib/plugins/delta/language/deltaTypes.js'
+import type {
+  DeltaValueContext,
+  DeltaValueRegistry
+} from '$lib/plugins/delta/value/deltaValueTypes.js'
 
 export type TextContent = { text: string }
 
@@ -627,6 +637,12 @@ export interface JSONEditorPropsOptional {
   onError?: OnError
   onFocus?: OnFocus
   onBlur?: OnBlur
+  deltaMode?: boolean
+  projectionMode?: ProjectionMode
+  languageEngine?: DeltaLanguageEngine
+  deltaLanguageService?: DeltaLanguageService
+  deltaTarget?: string
+  deltaSources?: DeltaSourceMap
 }
 
 export interface JSONEditorModalProps {
@@ -658,6 +674,12 @@ export interface JSONEditorModalProps {
   onSortModal: (props: SortModalCallback) => void
   onTransformModal: (props: TransformModalCallback) => void
   onClose: () => void
+  deltaMode: boolean
+  projectionMode: ProjectionMode
+  languageEngine: DeltaLanguageEngine
+  deltaLanguageService: DeltaLanguageService
+  deltaTarget?: string
+  deltaSources?: DeltaSourceMap
 }
 
 export interface JSONEditorContext {
@@ -676,6 +698,14 @@ export interface JSONEditorContext {
   onFind: OnFind
   onPasteJson: (newPastedJson: PastedJson) => void
   onRenderValue: OnRenderValue
+  deltaMode: boolean
+  projectionMode: ProjectionMode
+  languageEngine: DeltaLanguageEngine
+  deltaLanguageService: DeltaLanguageService
+  deltaTarget?: string
+  deltaSources?: DeltaSourceMap
+  deltaValueRegistry: DeltaValueRegistry
+  deltaValueContext: DeltaValueContext
 }
 
 export interface TreeModeContext extends JSONEditorContext {
@@ -704,6 +734,10 @@ export interface RenderValueProps extends Record<string, unknown> {
   isEditing: boolean
   parser: JSONParser
   normalization: ValueNormalization
+  deltaTarget?: string
+  deltaSources?: DeltaSourceMap
+  deltaValueRegistry: DeltaValueRegistry
+  deltaValueContext: DeltaValueContext
   onPatch: OnPatch
   onPasteJson: OnPasteJson
   onSelect: OnJSONSelect

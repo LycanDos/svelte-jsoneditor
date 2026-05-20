@@ -27,6 +27,27 @@ export { jmespathQueryLanguage } from './plugins/query/jmespathQueryLanguage.js'
 export { jsonpathQueryLanguage } from './plugins/query/jsonpathQueryLanguage.js'
 export { lodashQueryLanguage } from './plugins/query/lodashQueryLanguage.js'
 export { javascriptQueryLanguage } from './plugins/query/javascriptQueryLanguage.js'
+export { createDefaultDeltaLanguageService } from './plugins/delta/language/createDefaultDeltaLanguageService.js'
+export {
+  createGroupedDeltaProjection,
+  flattenGroupedDelta,
+  isDeltaProjectionGroup,
+  mapFlatDeltaPathToGroupedPath,
+  projectFlatDeltaToGrouped
+} from './plugins/delta/projection/grouped-projection.js'
+export { resolveDeltaSources } from './plugins/delta/context/resolveDeltaSources.js'
+export { createDefaultDeltaValueRegistry } from './plugins/delta/value/createDefaultDeltaValueRegistry.js'
+export {
+  analyzeDeltaValueMatch,
+  extractDeltaExpressionAliases,
+  formatDeltaValueAnalysisTitle,
+  resolveDeltaValueExpressionPath
+} from './plugins/delta/value/analyzeDeltaValue.js'
+export { collectDeltaValueValidationErrors } from './plugins/delta/value/collectDeltaValueValidationErrors.js'
+export {
+  formatDeltaValueContextTitle,
+  resolveDeltaValueContext
+} from './plugins/delta/value/resolveDeltaValueContext.js'
 
 // content
 export {

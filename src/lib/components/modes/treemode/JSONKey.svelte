@@ -16,6 +16,8 @@
   import { UpdateSelectionAfterChange } from '$lib/types.js'
   import { type JSONPath, type JSONPointer, parseJSONPointer } from 'immutable-json-patch'
   import ContextMenuPointer from '../../../components/controls/contextmenu/ContextMenuPointer.svelte'
+  import DeltaKeyText from '$lib/plugins/delta/components/DeltaKeyText.svelte'
+  import DeltaKeyEditor from '$lib/plugins/delta/components/DeltaKeyEditor.svelte'
 
   export let pointer: JSONPointer
   export let key: string
@@ -30,6 +32,7 @@
 
   $: isKeySelected = isKeySelection(selection) && isEqual(selection.path, path)
   $: isEditingKey = isKeySelected && isEditingSelection(selection)
+  $: useDeltaKeyUI = context.deltaMode && context.deltaLanguageService.isDeltaLikeKey(key)
 
   function handleKeyDoubleClick(
     event: MouseEvent & { currentTarget: EventTarget & HTMLDivElement }
@@ -62,25 +65,43 @@
 </script>
 
 {#if !context.readOnly && isEditingKey}
-  <EditableDiv
-    value={context.normalization.escapeValue(key)}
-    initialValue={isEditingSelection(selection) ? selection.initialValue : undefined}
-    label="Edit key"
-    shortText
-    onChange={handleChangeValue}
-    onCancel={handleCancelChange}
-    onFind={context.onFind}
-  />
+  {#if useDeltaKeyUI}
+    <DeltaKeyEditor
+      value={context.normalization.escapeValue(key)}
+      initialValue={isEditingSelection(selection) ? selection.initialValue : undefined}
+      label="Edit key"
+      onChange={handleChangeValue}
+      onCancel={handleCancelChange}
+      onFind={context.onFind}
+      languageService={context.deltaLanguageService}
+    />
+  {:else}
+    <EditableDiv
+      value={context.normalization.escapeValue(key)}
+      initialValue={isEditingSelection(selection) ? selection.initialValue : undefined}
+      label="Edit key"
+      shortText
+      onChange={handleChangeValue}
+      onCancel={handleCancelChange}
+      onFind={context.onFind}
+    />
+  {/if}
 {:else}
   <div
     role="none"
     data-type="selectable-key"
     class="jse-key"
+    class:jse-delta-key={useDeltaKeyUI}
     class:jse-empty={key === ''}
     on:dblclick={handleKeyDoubleClick}
   >
-    {#if searchResultItems}
+    {#if searchResultItems && !useDeltaKeyUI}
       <SearchResultHighlighter text={context.normalization.escapeValue(key)} {searchResultItems} />
+    {:else if useDeltaKeyUI}
+      <DeltaKeyText
+        keyText={context.normalization.escapeValue(key)}
+        languageService={context.deltaLanguageService}
+      />
     {:else}
       {addNewLineSuffix(context.normalization.escapeValue(key))}
     {/if}

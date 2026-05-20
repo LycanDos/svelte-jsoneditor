@@ -39,6 +39,22 @@
     syncDocumentState
   } from '$lib/logic/documentState.js'
   import { duplicate, extract, revertJSONPatchWithMoveOperations } from '$lib/logic/operations.js'
+  import type {
+    DeltaLanguageEngine,
+    DeltaLanguageService,
+    DeltaSourceMap,
+    ProjectionMode
+  } from '$lib/plugins/delta/language/deltaTypes.js'
+  import { createDefaultDeltaLanguageService } from '$lib/plugins/delta/language/createDefaultDeltaLanguageService.js'
+  import {
+    createGroupedDeltaProjection,
+    flattenGroupedDelta,
+    isDeltaProjectionGroup,
+    mapFlatDeltaPathToGroupedPath
+  } from '$lib/plugins/delta/projection/grouped-projection.js'
+  import { createDefaultDeltaValueRegistry } from '$lib/plugins/delta/value/createDefaultDeltaValueRegistry.js'
+  import { collectDeltaValueValidationErrors } from '$lib/plugins/delta/value/collectDeltaValueValidationErrors.js'
+  import { resolveDeltaValueContext } from '$lib/plugins/delta/value/resolveDeltaValueContext.js'
   import {
     canConvert,
     createAfterSelection,
@@ -213,6 +229,13 @@
   export let onSortModal: OnSortModal
   export let onTransformModal: OnTransformModal
   export let onJSONEditorModal: OnJSONEditorModal
+  export let deltaMode = false
+  export let projectionMode: ProjectionMode = 'flat'
+  export let languageEngine: DeltaLanguageEngine = 'codemirror'
+  export let deltaLanguageService: DeltaLanguageService = createDefaultDeltaLanguageService()
+  export let deltaTarget: string | undefined = undefined
+  export let deltaSources: DeltaSourceMap | undefined = undefined
+  const deltaValueRegistry = createDefaultDeltaValueRegistry()
 
   // modalOpen is true when one of the modals is open.
   // This is used to track whether the editor still has focus
@@ -248,6 +271,54 @@
   let selection: JSONSelection | undefined = isJSONSelection(externalSelection)
     ? externalSelection
     : undefined
+  let groupedPathMap = new Map<string, JSONPath>()
+
+  function deriveCanonicalJson(value: unknown): unknown {
+    return isDeltaProjectionGroup(value) ? flattenGroupedDelta(value) : value
+  }
+
+  function createProjectionState(value: unknown): { json: unknown; flatKeyPathMap: Map<string, JSONPath> } {
+    const canonicalValue = deriveCanonicalJson(value)
+
+    if (deltaMode && projectionMode === 'grouped') {
+      return createGroupedDeltaProjection(canonicalValue)
+    }
+
+    return {
+      json: canonicalValue,
+      flatKeyPathMap: new Map<string, JSONPath>()
+    }
+  }
+
+  function syncProjectionState() {
+    if (json === undefined || text !== undefined || parseError) {
+      return
+    }
+
+    const projectionState = createProjectionState(json)
+    const projectedJson = projectionState.json
+    groupedPathMap = projectionState.flatKeyPathMap
+
+    if (isEqual(projectedJson, json)) {
+      return
+    }
+
+    json = projectedJson
+    documentState = syncDocumentState(projectedJson, documentState)
+    clearSelectionWhenNotExisting(json)
+  }
+
+  function getEmittedContent(): Content {
+    if (text !== undefined) {
+      return { text }
+    }
+
+    if (json !== undefined) {
+      return { json: deriveCanonicalJson(json) }
+    }
+
+    return { text: '' }
+  }
 
   onMount(() => {
     if (selection) {
@@ -362,8 +433,19 @@
   // svelte-ignore reactive_declaration_non_reactive_property
   $: applyExternalSelection(externalSelection)
 
+  let lastProjectionSignature = `${deltaMode}:${projectionMode}`
+  $: {
+    const nextProjectionSignature = `${deltaMode}:${projectionMode}`
+
+    if (nextProjectionSignature !== lastProjectionSignature) {
+      lastProjectionSignature = nextProjectionSignature
+      syncProjectionState()
+    }
+  }
+
   let textIsRepaired = false
 
+  let canonicalValidationErrorList: ValidationError[] = []
   let validationErrorList: ValidationError[] = []
   let validationErrors: ValidationErrors | undefined
 
@@ -383,11 +465,25 @@
   ) {
     measure(
       () => {
-        let newValidationErrorList: ValidationError[]
+        let nextCanonicalValidationErrorList: ValidationError[]
         try {
-          newValidationErrorList = memoizedValidate(json, validator, parser, validationParser)
+          nextCanonicalValidationErrorList = memoizedValidate(
+            deriveCanonicalJson(json),
+            validator,
+            parser,
+            validationParser
+          )
+          if (deltaMode) {
+            nextCanonicalValidationErrorList = nextCanonicalValidationErrorList.concat(
+              collectDeltaValueValidationErrors(
+                deriveCanonicalJson(json),
+                deltaValueRegistry,
+                resolveDeltaValueContext(deltaSources, deltaTarget)
+              )
+            )
+          }
         } catch (err) {
-          newValidationErrorList = [
+          nextCanonicalValidationErrorList = [
             {
               path: [],
               message: 'Failed to validate: ' + (err as Error).message,
@@ -396,9 +492,21 @@
           ]
         }
 
-        if (!isEqual(newValidationErrorList, validationErrorList)) {
-          debug('validationErrors changed:', newValidationErrorList)
-          validationErrorList = newValidationErrorList
+        const nextValidationErrorList =
+          deltaMode && projectionMode === 'grouped'
+            ? nextCanonicalValidationErrorList.map((validationError) => ({
+                ...validationError,
+                path: mapFlatDeltaPathToGroupedPath(groupedPathMap, validationError.path)
+              }))
+            : nextCanonicalValidationErrorList
+
+        if (
+          !isEqual(nextCanonicalValidationErrorList, canonicalValidationErrorList) ||
+          !isEqual(nextValidationErrorList, validationErrorList)
+        ) {
+          debug('validationErrors changed:', nextCanonicalValidationErrorList)
+          canonicalValidationErrorList = nextCanonicalValidationErrorList
+          validationErrorList = nextValidationErrorList
           validationErrors = toRecursiveValidationErrors(json, validationErrorList)
         }
       },
@@ -419,7 +527,9 @@
     // make sure the validation results are up-to-date
     // normally, they are only updated on the next tick after the json is changed
     updateValidationErrors(json, validator, parser, validationParser)
-    return !isEmpty(validationErrorList) ? { validationErrors: validationErrorList } : undefined
+    return !isEmpty(canonicalValidationErrorList)
+      ? { validationErrors: canonicalValidationErrorList }
+      : undefined
   }
 
   export function getJson() {
@@ -450,7 +560,7 @@
     }
 
     // TODO: this is inefficient. Make an optional flag promising that the updates are immutable so we don't have to do a deep equality check? First do some profiling!
-    const isChanged = !isEqual(json, updatedJson)
+    const isChanged = !isEqual(deriveCanonicalJson(json), updatedJson)
 
     debug('update external json', { isChanged, currentlyText: json === undefined })
 
@@ -461,8 +571,10 @@
 
     const previousState = { documentState, selection, json, text, textIsRepaired }
 
-    json = updatedJson
-    documentState = syncDocumentState(updatedJson, documentState)
+    const projectionState = createProjectionState(updatedJson)
+    groupedPathMap = projectionState.flatKeyPathMap
+    json = projectionState.json
+    documentState = syncDocumentState(json, documentState)
     expandWhenNotInitialized(json)
     text = undefined
     textIsRepaired = false
@@ -489,7 +601,11 @@
     const previousState = { documentState, selection, json, text, textIsRepaired }
 
     try {
-      json = parseMemoizeOne(updatedText)
+      {
+        const projectionState = createProjectionState(parseMemoizeOne(updatedText))
+        groupedPathMap = projectionState.flatKeyPathMap
+        json = projectionState.json
+      }
       documentState = syncDocumentState(json, documentState)
       expandWhenNotInitialized(json)
       text = updatedText
@@ -497,7 +613,11 @@
       parseError = undefined
     } catch (err) {
       try {
-        json = parseMemoizeOne(jsonrepair(updatedText))
+        {
+          const projectionState = createProjectionState(parseMemoizeOne(jsonrepair(updatedText)))
+          groupedPathMap = projectionState.flatKeyPathMap
+          json = projectionState.json
+        }
         documentState = syncDocumentState(json, documentState)
         expandWhenNotInitialized(json)
         text = updatedText
@@ -507,6 +627,7 @@
       } catch {
         // no valid JSON, will show empty document or invalid json
         json = undefined
+        groupedPathMap = new Map<string, JSONPath>()
         documentState = undefined
         text = externalContent['text']
         textIsRepaired = false
@@ -610,8 +731,9 @@
     }
 
     const previousJson = json
+    const useSnapshotHistory = deltaMode && projectionMode === 'grouped'
     const previousState = {
-      json: undefined, // not needed: we use patch to reconstruct the json
+      json: useSnapshotHistory ? previousJson : undefined,
       text,
       documentState,
       selection: removeEditModeFromSelection(selection),
@@ -642,6 +764,7 @@
     pastedJson = undefined
     pastedMultilineText = undefined
     parseError = undefined
+    syncProjectionState()
 
     // ensure the selection is valid
     clearSelectionWhenNotExisting(json)
@@ -649,12 +772,12 @@
     history.add({
       type: 'tree',
       undo: {
-        patch: undo,
+        patch: useSnapshotHistory ? undefined : undo,
         ...previousState
       },
       redo: {
-        patch: operations,
-        json: undefined, // not needed, we use patch to reconstruct
+        patch: useSnapshotHistory ? undefined : operations,
+        json: useSnapshotHistory ? json : undefined,
         text,
         documentState,
         selection: removeEditModeFromSelection(selection),
@@ -724,10 +847,10 @@
 
   export function acceptAutoRepair(): Content {
     if (textIsRepaired && json !== undefined) {
-      handleReplaceJson(json)
+      handleReplaceJson(deriveCanonicalJson(json))
     }
 
-    return json !== undefined ? { json } : { text: text || '' }
+    return getEmittedContent()
   }
 
   async function handleCut(indent = true) {
@@ -997,7 +1120,7 @@
       return
     }
 
-    const previousContent = { json, text }
+    const previousContent = getEmittedContent()
 
     json = item.undo.patch ? immutableJSONPatch(json, item.undo.patch) : item.undo.json
     documentState = item.undo.documentState
@@ -1005,14 +1128,15 @@
     text = item.undo.text
     textIsRepaired = item.undo.textIsRepaired
     parseError = undefined
+    syncProjectionState()
 
     debug('undo', { item, json, documentState, selection })
 
     const patchResult =
-      item.undo.patch && item.redo.patch
+      item.undo.patch && item.redo.patch && !(deltaMode && projectionMode === 'grouped')
         ? {
             json,
-            previousJson: previousContent.json,
+            previousJson: 'json' in previousContent ? previousContent.json : undefined,
             redo: item.undo.patch,
             undo: item.redo.patch
           }
@@ -1042,7 +1166,7 @@
       return
     }
 
-    const previousContent = { json, text }
+    const previousContent = getEmittedContent()
 
     json = item.redo.patch ? immutableJSONPatch(json, item.redo.patch) : item.redo.json
     documentState = item.redo.documentState
@@ -1050,14 +1174,15 @@
     text = item.redo.text
     textIsRepaired = item.redo.textIsRepaired
     parseError = undefined
+    syncProjectionState()
 
     debug('redo', { item, json, documentState, selection })
 
     const patchResult =
-      item.undo.patch && item.redo.patch
+      item.undo.patch && item.redo.patch && !(deltaMode && projectionMode === 'grouped')
         ? {
             json,
-            previousJson: previousContent.json,
+            previousJson: 'json' in previousContent ? previousContent.json : undefined,
             redo: item.redo.patch,
             undo: item.undo.patch
           }
@@ -1298,14 +1423,14 @@
 
     // make sure we cannot send an invalid contents like having both
     // json and text defined, or having none defined
-    if (text !== undefined) {
-      const content = { text, json: undefined }
+    const content = getEmittedContent()
+
+    if ('text' in content) {
       onChange?.(content, previousContent, {
         contentErrors: validate(),
         patchResult
       })
-    } else if (json !== undefined) {
-      const content = { text: undefined, json }
+    } else if ('json' in content) {
       onChange?.(content, previousContent, {
         contentErrors: validate(),
         patchResult
@@ -1319,36 +1444,40 @@
   ): JSONPatchResult {
     debug('handlePatch', operations, afterPatch)
 
-    const previousContent = { json, text }
+    const previousContent = getEmittedContent()
     const patchResult = patch(operations, afterPatch)
 
-    emitOnChange(previousContent, patchResult)
+    emitOnChange(previousContent, deltaMode && projectionMode === 'grouped' ? undefined : patchResult)
 
     return patchResult
   }
 
   function handleReplaceJson(updatedJson: unknown, afterPatch?: AfterPatchCallback) {
-    const previousContent = { json, text }
+    const previousContent = getEmittedContent()
     const previousState = { documentState, selection, json, text, textIsRepaired }
+    const projectionState = createProjectionState(updatedJson)
+    const projectedJson = projectionState.json
+    groupedPathMap = projectionState.flatKeyPathMap
 
     const updatedState = expandPath(
       json,
-      syncDocumentState(updatedJson, documentState),
+      syncDocumentState(projectedJson, documentState),
       [],
       expandMinimal
     )
 
     const callback =
       typeof afterPatch === 'function'
-        ? afterPatch(updatedJson, updatedState, selection)
+        ? afterPatch(projectedJson, updatedState, selection)
         : undefined
 
-    json = callback?.json !== undefined ? callback.json : updatedJson
+    json = callback?.json !== undefined ? callback.json : projectedJson
     documentState = callback?.state !== undefined ? callback.state : updatedState
     selection = callback?.selection !== undefined ? callback.selection : selection
     text = undefined
     textIsRepaired = false
     parseError = undefined
+    syncProjectionState()
 
     // make sure the selection is valid
     clearSelectionWhenNotExisting(json)
@@ -1366,18 +1495,26 @@
   function handleChangeText(updatedText: string, afterPatch?: AfterPatchCallback) {
     debug('handleChangeText')
 
-    const previousContent = { json, text }
+    const previousContent = getEmittedContent()
     const previousState = { documentState, selection, json, text, textIsRepaired }
 
     try {
-      json = parseMemoizeOne(updatedText)
+      {
+        const projectionState = createProjectionState(parseMemoizeOne(updatedText))
+        groupedPathMap = projectionState.flatKeyPathMap
+        json = projectionState.json
+      }
       documentState = expandPath(json, syncDocumentState(json, documentState), [], expandMinimal)
       text = undefined
       textIsRepaired = false
       parseError = undefined
     } catch (err) {
       try {
-        json = parseMemoizeOne(jsonrepair(updatedText))
+        {
+          const projectionState = createProjectionState(parseMemoizeOne(jsonrepair(updatedText)))
+          groupedPathMap = projectionState.flatKeyPathMap
+          json = projectionState.json
+        }
         documentState = expandPath(json, syncDocumentState(json, documentState), [], expandMinimal)
         text = updatedText
         textIsRepaired = true
@@ -1385,6 +1522,7 @@
       } catch {
         // no valid JSON, will show empty document or invalid json
         json = undefined
+        groupedPathMap = new Map<string, JSONPath>()
         documentState = createDocumentState({ json, expand: expandMinimal })
         text = updatedText
         textIsRepaired = false
@@ -1402,6 +1540,8 @@
       documentState = callback?.state !== undefined ? callback.state : documentState
       selection = callback?.selection !== undefined ? callback.selection : selection
     }
+
+    syncProjectionState()
 
     // ensure the selection is valid
     clearSelectionWhenNotExisting(json)
@@ -1914,6 +2054,14 @@
     onExpandSection: handleExpandSection,
     onPasteJson: handlePasteJson,
     onRenderValue,
+    deltaMode,
+    projectionMode,
+    languageEngine,
+    deltaLanguageService,
+    deltaTarget,
+    deltaSources,
+    deltaValueRegistry,
+    deltaValueContext: resolveDeltaValueContext(deltaSources, deltaTarget),
     onContextMenu: openContextMenu,
     onClassName: onClassName || (() => undefined),
     onDrag: handleDrag,

@@ -76,6 +76,12 @@
   import { isCtrlKeyDown } from 'svelte-jsoneditor/utils/keyBindings'
   import Tag from '../../../components/controls/Tag.svelte'
   import { flushSync } from 'svelte'
+  import {
+    analyzeDeltaValueMatch,
+    formatDeltaValueAnalysisTitle
+  } from '$lib/plugins/delta/value/analyzeDeltaValue.js'
+  import { formatDeltaValueContextTitle } from '$lib/plugins/delta/value/resolveDeltaValueContext.js'
+  import type { DeltaValueMatch } from '$lib/plugins/delta/value/deltaValueTypes.js'
 
   // We pass `pointer` instead of `path` because pointer (a string) is immutable.
   // Without it, *all* nodes would re-render on *every* change in JSON or DocumentState,
@@ -112,6 +118,21 @@
 
   let validationError: NestedValidationError | undefined
   $: validationError = validationErrors?.validationError
+
+  let deltaValueMatch: DeltaValueMatch | undefined
+  $: deltaValueMatch =
+    context.deltaMode && isObject(value) ? context.deltaValueRegistry.detect(value) : undefined
+  $: deltaValueAnalysis = deltaValueMatch
+    ? analyzeDeltaValueMatch(deltaValueMatch, context.deltaValueContext)
+    : undefined
+  $: deltaValueTitle = deltaValueMatch
+    ? formatDeltaValueAnalysisTitle(
+        deltaValueAnalysis,
+        `${deltaValueMatch.language.directive}: ${formatDeltaValueContextTitle(
+          context.deltaValueContext
+        )}`
+      )
+    : undefined
 
   let isNodeSelected: boolean
   // eslint-disable-next-line svelte/no-unused-svelte-ignore
@@ -754,12 +775,33 @@
           <div class="jse-meta-inner">
             {#if expanded}
               <div class="jse-bracket jse-expanded">&lbrace;</div>
+              {#if deltaValueMatch}
+                <span title={deltaValueTitle}>
+                  <Tag>{deltaValueMatch.language.id}</Tag>
+                </span>
+                {#if deltaValueAnalysis && deltaValueAnalysis.issues.length > 0}
+                  <span title={deltaValueTitle}>
+                    <Tag>ctx?</Tag>
+                  </span>
+                {/if}
+              {/if}
             {:else}
               <div class="jse-bracket">&lbrace;</div>
-              <Tag onclick={handleExpand}>
-                {Object.keys(value).length}
-                {Object.keys(value).length === 1 ? 'prop' : 'props'}
-              </Tag>
+              {#if deltaValueMatch}
+                <span title={deltaValueTitle}>
+                  <Tag onclick={handleExpand}>{deltaValueMatch.language.id}</Tag>
+                </span>
+                {#if deltaValueAnalysis && deltaValueAnalysis.issues.length > 0}
+                  <span title={deltaValueTitle}>
+                    <Tag onclick={handleExpand}>ctx?</Tag>
+                  </span>
+                {/if}
+              {:else}
+                <Tag onclick={handleExpand}>
+                  {Object.keys(value).length}
+                  {Object.keys(value).length === 1 ? 'prop' : 'props'}
+                </Tag>
+              {/if}
               <div class="jse-bracket">&rbrace;</div>
             {/if}
           </div>

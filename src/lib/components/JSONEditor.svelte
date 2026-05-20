@@ -50,6 +50,13 @@
   import memoizeOne from 'memoize-one'
   import { cloneDeep } from 'lodash-es'
   import SortModal from './modals/SortModal.svelte'
+  import { createDefaultDeltaLanguageService } from '$lib/plugins/delta/language/createDefaultDeltaLanguageService.js'
+  import type {
+    DeltaLanguageEngine,
+    DeltaLanguageService,
+    DeltaSourceMap,
+    ProjectionMode
+  } from '$lib/plugins/delta/language/deltaTypes.js'
 
   // TODO: document how to enable debugging in the readme: localStorage.debug="jsoneditor:*", then reload
   const debug = createDebug('jsoneditor:JSONEditor')
@@ -92,6 +99,12 @@
   }
   const onFocusDefault = noop
   const onBlurDefault = noop
+  const deltaModeDefault = false
+  const projectionModeDefault: ProjectionMode = 'flat'
+  const languageEngineDefault: DeltaLanguageEngine = 'codemirror'
+  const deltaLanguageServiceDefault: DeltaLanguageService = createDefaultDeltaLanguageService()
+  const deltaTargetDefault = undefined
+  const deltaSourcesDefault: DeltaSourceMap | undefined = undefined
 
   export let content: Content = contentDefault
   export let selection: JSONEditorSelection | undefined = selectionDefault
@@ -125,6 +138,12 @@
   export let onError: OnError = onErrorDefault
   export let onFocus: OnFocus = onFocusDefault
   export let onBlur: OnBlur = onBlurDefault
+  export let deltaMode: boolean = deltaModeDefault
+  export let projectionMode: ProjectionMode = projectionModeDefault
+  export let languageEngine: DeltaLanguageEngine = languageEngineDefault
+  export let deltaLanguageService: DeltaLanguageService = deltaLanguageServiceDefault
+  export let deltaTarget: string | undefined = deltaTargetDefault
+  export let deltaSources: DeltaSourceMap | undefined = deltaSourcesDefault
 
   let instanceId = uniqueId()
   let hasFocus = false
@@ -388,6 +407,24 @@
         case 'onBlur':
           onBlur = props[name] ?? onBlurDefault
           break
+        case 'deltaMode':
+          deltaMode = props[name] ?? deltaModeDefault
+          break
+        case 'projectionMode':
+          projectionMode = props[name] ?? projectionModeDefault
+          break
+        case 'languageEngine':
+          languageEngine = props[name] ?? languageEngineDefault
+          break
+        case 'deltaLanguageService':
+          deltaLanguageService = props[name] ?? deltaLanguageServiceDefault
+          break
+        case 'deltaTarget':
+          deltaTarget = props[name]
+          break
+        case 'deltaSources':
+          deltaSources = props[name]
+          break
 
         default:
           // We should never reach this default case
@@ -535,7 +572,13 @@
       onRenderContextMenu,
       onSortModal,
       onTransformModal,
-      onClose
+      onClose,
+      deltaMode,
+      projectionMode,
+      languageEngine,
+      deltaLanguageService,
+      deltaTarget,
+      deltaSources
     }
   }
 
@@ -584,6 +627,12 @@
         onBlur={handleBlur}
         {onRenderMenu}
         {onRenderContextMenu}
+        {deltaMode}
+        {projectionMode}
+        {languageEngine}
+        {deltaLanguageService}
+        {deltaTarget}
+        {deltaSources}
         {onSortModal}
         {onTransformModal}
         {onJSONEditorModal}

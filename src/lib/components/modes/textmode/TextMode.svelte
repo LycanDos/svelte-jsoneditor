@@ -10,7 +10,7 @@
   import { type SyntaxNode, type SyntaxNodeRef, type Tree, type NodeIterator } from '@lezer/common'
   import { createDebug } from '$lib/utils/debug.js'
   import type { JSONPatchDocument, JSONPath } from 'immutable-json-patch'
-  import { immutableJSONPatch, revertJSONPatch } from 'immutable-json-patch'
+  import { getIn, immutableJSONPatch, revertJSONPatch } from 'immutable-json-patch'
   import { jsonrepair } from 'jsonrepair'
   import { debounce, isEqual, uniqueId } from 'lodash-es'
   import { flushSync, onDestroy, onMount } from 'svelte'
@@ -133,6 +133,18 @@
   import { indentationMarkers } from '@replit/codemirror-indentation-markers'
   import { isTextSelection } from '$lib/logic/selection.js'
   import { wrappedLineIndent } from 'codemirror-wrapped-line-indent/dist/index.js' // ensure loading ESM, otherwise the vitest test fail
+  import { createDeltaKeyDecorations } from '$lib/plugins/delta/language/createDeltaKeyDecorations.js'
+  import { createDefaultDeltaLanguageService } from '$lib/plugins/delta/language/createDefaultDeltaLanguageService.js'
+  import { collectDeltaValueValidationErrors } from '$lib/plugins/delta/value/collectDeltaValueValidationErrors.js'
+  import { createDefaultDeltaValueRegistry } from '$lib/plugins/delta/value/createDefaultDeltaValueRegistry.js'
+  import { resolveDeltaValueContext } from '$lib/plugins/delta/value/resolveDeltaValueContext.js'
+  import { resolveDeltaValueExpressionPath } from '$lib/plugins/delta/value/analyzeDeltaValue.js'
+  import type {
+    DeltaLanguageEngine,
+    DeltaLanguageService,
+    DeltaSourceMap,
+    ProjectionMode
+  } from '$lib/plugins/delta/language/deltaTypes.js'
 
   export let readOnly: boolean
   export let mainMenuBar: boolean
@@ -159,6 +171,13 @@
   export let onRenderMenu: OnRenderMenuInternal
   export let onSortModal: OnSortModal
   export let onTransformModal: OnTransformModal
+  export let deltaMode = false
+  export let projectionMode: ProjectionMode = 'flat'
+  export let languageEngine: DeltaLanguageEngine = 'codemirror'
+  export let deltaLanguageService: DeltaLanguageService = createDefaultDeltaLanguageService()
+  export let deltaTarget: string | undefined = undefined
+  export let deltaSources: DeltaSourceMap | undefined = undefined
+  const deltaValueRegistry = createDefaultDeltaValueRegistry()
 
   const debug = createDebug('jsoneditor:TextMode')
 
@@ -181,6 +200,7 @@
   let askToFormatApplied = askToFormat
 
   let validationErrors: ValidationError[] = []
+  let lastValidatedJson: unknown | undefined = undefined
 
   // collapse state
   let isFolding = false
@@ -194,6 +214,7 @@
   const indentCompartment = new Compartment()
   const tabSizeCompartment = new Compartment()
   const themeCompartment = new Compartment()
+  const deltaLanguageCompartment = new Compartment()
 
   let content: Content = externalContent
   let text = getText(content, indentation, parser) // text is just a cached version of content.text or parsed content.json
@@ -249,6 +270,7 @@
   $: updateIndentation(indentation)
   $: updateTabSize(tabSize)
   $: updateReadOnly(readOnly)
+  $: updateDeltaLanguage(deltaMode, languageEngine, projectionMode, deltaLanguageService)
 
   // force updating the text when escapeUnicodeCharacters changes
   let previousEscapeUnicodeCharacters = escapeUnicodeCharacters
@@ -841,6 +863,14 @@
     return linter(linterCallback, { delay: TEXT_MODE_ONCHANGE_DELAY })
   }
 
+  function createDeltaLanguageExtensions() {
+    if (!deltaMode || languageEngine !== 'codemirror') {
+      return [] as Extension[]
+    }
+
+    return [createDeltaKeyDecorations(deltaLanguageService)]
+  }
+
   function createCodeMirrorView({
     target,
     initialText,
@@ -895,6 +925,7 @@
         ]),
         highlighter,
         indentationMarkers({ hideFirstIndent: true }),
+        deltaLanguageCompartment.of(createDeltaLanguageExtensions()),
         EditorView.domEventHandlers({
           dblclick: handleDoubleClick
         }),
@@ -970,10 +1001,20 @@
 
   function toRichValidationError(validationError: ValidationError): RichValidationError {
     const { path, message, severity } = validationError
-    const { line, column, from, to } = findTextLocation(normalization.escapeValue(text), path)
+    const diagnosticPath =
+      deltaMode &&
+      message.startsWith('Delta value context:') &&
+      lastValidatedJson !== undefined
+        ? resolveDeltaValueExpressionPath(
+            lastValidatedJson,
+            path,
+            deltaValueRegistry.detect(getIn(lastValidatedJson, path))
+          )
+        : path
+    const { line, column, from, to } = findTextLocation(normalization.escapeValue(text), diagnosticPath)
 
     return {
-      path,
+      path: diagnosticPath,
       line,
       column,
       from,
@@ -1138,6 +1179,29 @@
     })
   }
 
+  function updateDeltaLanguage(
+    deltaMode: boolean,
+    languageEngine: DeltaLanguageEngine,
+    projectionMode: ProjectionMode,
+    deltaLanguageService: DeltaLanguageService
+  ) {
+    if (!codeMirrorView) {
+      return
+    }
+
+    debug('updateDeltaLanguage', {
+      deltaMode,
+      languageEngine,
+      projectionMode,
+      deltaTarget,
+      deltaSources
+    })
+
+    codeMirrorView.dispatch({
+      effects: deltaLanguageCompartment.reconfigure(createDeltaLanguageExtensions())
+    })
+  }
+
   function updateIndentation(indentation: number | string) {
     if (codeMirrorView) {
       debug('updateIndentation', indentation)
@@ -1271,12 +1335,35 @@
 
     flush()
 
-    const contentErrors = memoizedValidateText(
+    lastValidatedJson = undefined
+
+    let contentErrors = memoizedValidateText(
       normalization.escapeValue(text),
       validator,
       parser,
       validationParser
     )
+
+    if (deltaMode && !isContentParseError(contentErrors)) {
+      try {
+        const parsedJson = parser.parse(normalization.escapeValue(text))
+        lastValidatedJson = parsedJson
+        const deltaValidationErrors = collectDeltaValueValidationErrors(
+          parsedJson,
+          deltaValueRegistry,
+          resolveDeltaValueContext(deltaSources, deltaTarget)
+        )
+
+        if (deltaValidationErrors.length > 0) {
+          contentErrors = {
+            validationErrors: [...(contentErrors?.validationErrors ?? []), ...deltaValidationErrors]
+          }
+        }
+      } catch {
+        // ignore here, parse errors are already handled by validateText
+        lastValidatedJson = undefined
+      }
+    }
 
     if (isContentParseError(contentErrors)) {
       jsonStatus = contentErrors.isRepairable ? JSON_STATUS_REPAIRABLE : JSON_STATUS_INVALID

@@ -33,6 +33,13 @@
   import { getFocusPath, isJSONSelection } from '$lib/logic/selection.js'
   import Modal from './Modal.svelte'
   import AbsolutePopup from './popup/AbsolutePopup.svelte'
+  import type {
+    DeltaLanguageEngine,
+    DeltaLanguageService,
+    DeltaSourceMap,
+    ProjectionMode
+  } from '$lib/plugins/delta/language/deltaTypes.js'
+  import { createDefaultDeltaLanguageService } from '$lib/plugins/delta/language/createDefaultDeltaLanguageService.js'
 
   const debug = createDebug('jsoneditor:JSONEditorModal')
 
@@ -66,6 +73,12 @@
   export let onTransformModal: OnTransformModal
 
   export let onClose: () => void
+  export let deltaMode = false
+  export let projectionMode: ProjectionMode = 'flat'
+  export let languageEngine: DeltaLanguageEngine = 'codemirror'
+  export let deltaLanguageService: DeltaLanguageService = createDefaultDeltaLanguageService()
+  export let deltaTarget: string | undefined = undefined
+  export let deltaSources: DeltaSourceMap | undefined = undefined
 
   interface ModalState {
     mode: Mode
@@ -276,6 +289,12 @@
             onBlur={noop}
             {onRenderMenu}
             {onRenderContextMenu}
+            {deltaMode}
+            {projectionMode}
+            {languageEngine}
+            {deltaLanguageService}
+            {deltaTarget}
+            {deltaSources}
             {onSortModal}
             {onTransformModal}
             onJSONEditorModal={handleJSONEditorModal}

@@ -26,4 +26,16 @@
       content: 'key';
     }
   }
+
+  &.jse-delta-key {
+    font-family: var(
+      --jse-font-family-mono,
+      ui-monospace,
+      'SFMono-Regular',
+      Consolas,
+      'Liberation Mono',
+      Menlo,
+      monospace
+    );
+  }
 }
